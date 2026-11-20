@@ -2,6 +2,5 @@
 __pycache__/
 *.pyc
 results.json
-figures/
 case/metrics/
 case/results/
