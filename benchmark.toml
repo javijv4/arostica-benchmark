@@ -1,0 +1,18 @@
+schema = 1
+name = "LV fiber P2, nodal fibers"
+reference_source = "Aróstica et al., Computer Methods in Applied Mechanics and Engineering 435 (2025) 117485, https://doi.org/10.1016/j.cma.2024.117485 and https://zenodo.org/records/14260459."
+
+[solver.solve]
+cwd = "case"
+input = "solver.xml"
+
+[postprocess.extract_displacement]
+argv = ["python3", "scripts/benchmark.py", "extract"]
+
+[evaluation.excursion]
+argv = ["python3", "scripts/benchmark.py", "evaluate", "excursion"]
+reference = 0.0
+atol = 1.0e-9
+
+[cleanup.remove_snapshots]
+argv = ["python3", "scripts/benchmark.py", "cleanup"]

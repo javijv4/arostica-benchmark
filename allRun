@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Run a standalone svMultiPhysics benchmark suite."""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+import svbenchmark
+from svbenchmark.manifest import BenchmarkRunResult
+
+
+def solver_build(executable):
+    try:
+        result = subprocess.run(
+            [str(executable), "--version"], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    match = re.search(
+        r"^\[svMultiPhysics\] version (?P<version>\S+) tag (?P<tag>\S+) "
+        r"commit (?P<commit>\S+)",
+        result.stdout,
+        re.MULTILINE,
+    )
+    return match.groupdict() if match else None
+
+
+def main():
+    root = Path(__file__).resolve().parent
+    manifest = root / "benchmark.toml"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--solver", default=os.environ.get("SVMP_EXECUTABLE", "svmultiphysics"))
+    parser.add_argument("--ranks", type=int, default=1)
+    figure_script = root / "scripts" / "generate_figures.py"
+    if figure_script.is_file():
+        parser.add_argument("--figures", action="store_true", help="generate figures after the cases")
+    args = parser.parse_args()
+    if not manifest.is_file():
+        parser.error("no benchmark.toml found in the suite directory")
+    if args.ranks < 1:
+        parser.error("--ranks must be positive")
+    executable = shutil.which(str(Path(args.solver).expanduser()))
+    if executable is None:
+        parser.error(f"cannot find executable {args.solver}")
+    mpi_launcher = shutil.which("mpirun")
+    if mpi_launcher is None:
+        parser.error("cannot find MPI launcher mpirun")
+
+    solver = Path(executable).resolve()
+    context = svbenchmark.SolveExecutionContext(
+        solver_executable=solver,
+        mpi_ranks=args.ranks,
+        mpi_launcher=str(Path(mpi_launcher).resolve()),
+    )
+    os.environ["BENCHMARK_SOLVER_BUILD"] = json.dumps(solver_build(solver))
+
+    phases = ("preprocess", "solver", "postprocess", "evaluation", "cleanup")
+    print("Running benchmark", flush=True)
+    result = svbenchmark.run_benchmark(svbenchmark.load_benchmark(manifest), context)
+    combined = {phase: dict(getattr(result, phase)) for phase in phases}
+    report = BenchmarkRunResult(name=root.name, base_directory=root, **combined)
+    svbenchmark.write_benchmark_json(report, root / "results.json")
+    for name, item in result.evaluation.items():
+        print(f"{name} = {item.value:g} ({item.status})", flush=True)
+
+    if getattr(args, "figures", False):
+        subprocess.run([sys.executable, str(figure_script)], cwd=root, check=True)
+    return int(any(item.status != "pass" for item in combined["evaluation"].values()))
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except subprocess.CalledProcessError as error:
+        print(error, file=sys.stderr)
+        for note in getattr(error, "__notes__", ()):
+            print(note, file=sys.stderr)
+        sys.exit(1)
